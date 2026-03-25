@@ -5,7 +5,11 @@ from pathlib import Path
 
 import pytest
 
-from replay.storage.duckdb_repo import DuckDBRunRepository, DuckDBStepRepository
+from replay.storage.duckdb_repo import (
+    DuckDBRunRepository,
+    DuckDBStepRepository,
+    open_db,
+)
 from replay.types import Run, Step, StepType
 
 
@@ -14,18 +18,18 @@ def _now() -> datetime:
 
 
 @pytest.fixture
-def db_path(tmp_path: Path) -> Path:
-    return tmp_path / "test_runs.db"
+def conn(tmp_path: Path) -> object:
+    return open_db(tmp_path / "test_runs.db")
 
 
 @pytest.fixture
-def run_repo(db_path: Path) -> DuckDBRunRepository:
-    return DuckDBRunRepository(db_path)
+def run_repo(conn: object) -> DuckDBRunRepository:
+    return DuckDBRunRepository(conn)  # type: ignore[arg-type]
 
 
 @pytest.fixture
-def step_repo(db_path: Path) -> DuckDBStepRepository:
-    return DuckDBStepRepository(db_path)
+def step_repo(conn: object) -> DuckDBStepRepository:
+    return DuckDBStepRepository(conn)  # type: ignore[arg-type]
 
 
 @pytest.mark.integration
@@ -42,7 +46,9 @@ class TestDuckDBRunRepository:
         assert "prod" in fetched.tags
 
     @pytest.mark.anyio
-    async def test_get_run_returns_none_for_missing(self, run_repo: DuckDBRunRepository) -> None:
+    async def test_get_run_returns_none_for_missing(
+        self, run_repo: DuckDBRunRepository
+    ) -> None:
         result = await run_repo.get_run("nonexistent")
         assert result is None
 
@@ -50,30 +56,26 @@ class TestDuckDBRunRepository:
     async def test_update_run_ended(self, run_repo: DuckDBRunRepository) -> None:
         run = Run(id="r1", name="test", started_at=_now())
         await run_repo.save_run(run)
-
-        ended = _now()
-        await run_repo.update_run_ended("r1", ended)
+        await run_repo.update_run_ended("r1", _now())
 
         fetched = await run_repo.get_run("r1")
         assert fetched is not None
         assert fetched.ended_at is not None
 
     @pytest.mark.anyio
-    async def test_list_runs_returns_newest_first(self, run_repo: DuckDBRunRepository) -> None:
+    async def test_list_runs_newest_first(self, run_repo: DuckDBRunRepository) -> None:
         import anyio
 
-        r1 = Run(id="r1", name="old", started_at=_now())
-        await run_repo.save_run(r1)
+        await run_repo.save_run(Run(id="r1", name="old", started_at=_now()))
         await anyio.sleep(0.01)
-        r2 = Run(id="r2", name="new", started_at=_now())
-        await run_repo.save_run(r2)
+        await run_repo.save_run(Run(id="r2", name="new", started_at=_now()))
 
         runs = await run_repo.list_runs(limit=10)
         assert runs[0].id == "r2"
         assert runs[1].id == "r1"
 
     @pytest.mark.anyio
-    async def test_list_runs_filters_by_name(self, run_repo: DuckDBRunRepository) -> None:
+    async def test_list_runs_filter_by_name(self, run_repo: DuckDBRunRepository) -> None:
         await run_repo.save_run(Run(id="r1", name="booking-agent", started_at=_now()))
         await run_repo.save_run(Run(id="r2", name="search-agent", started_at=_now()))
 
@@ -100,13 +102,12 @@ class TestDuckDBRunRepository:
 @pytest.mark.integration
 class TestDuckDBStepRepository:
     @pytest.mark.anyio
-    async def test_save_and_retrieve_steps(
+    async def test_save_and_retrieve_step(
         self,
         run_repo: DuckDBRunRepository,
         step_repo: DuckDBStepRepository,
     ) -> None:
-        run = Run(id="r1", name="test", started_at=_now())
-        await run_repo.save_run(run)
+        await run_repo.save_run(Run(id="r1", name="test", started_at=_now()))
 
         step = Step(
             id="s1",
@@ -137,8 +138,7 @@ class TestDuckDBStepRepository:
         run_repo: DuckDBRunRepository,
         step_repo: DuckDBStepRepository,
     ) -> None:
-        run = Run(id="r1", name="test", started_at=_now())
-        await run_repo.save_run(run)
+        await run_repo.save_run(Run(id="r1", name="test", started_at=_now()))
 
         def _s(idx: int) -> Step:
             return Step(
@@ -153,7 +153,6 @@ class TestDuckDBStepRepository:
                 output={},
             )
 
-        # Insert out of order intentionally
         await step_repo.save_step(_s(2))
         await step_repo.save_step(_s(0))
         await step_repo.save_step(_s(1))
@@ -167,8 +166,7 @@ class TestDuckDBStepRepository:
         run_repo: DuckDBRunRepository,
         step_repo: DuckDBStepRepository,
     ) -> None:
-        run = Run(id="r1", name="test", started_at=_now())
-        await run_repo.save_run(run)
+        await run_repo.save_run(Run(id="r1", name="test", started_at=_now()))
 
         for i in range(5):
             await step_repo.save_step(
@@ -186,5 +184,34 @@ class TestDuckDBStepRepository:
             )
 
         steps = await step_repo.get_steps_up_to("r1", max_index=2)
-        assert len(steps) == 3  # indices 0, 1, 2
+        assert len(steps) == 3
         assert [s.index for s in steps] == [0, 1, 2]
+
+    @pytest.mark.anyio
+    async def test_shared_connection_no_lock_error(
+        self,
+        run_repo: DuckDBRunRepository,
+        step_repo: DuckDBStepRepository,
+    ) -> None:
+        """Run and step writes on the same connection must not deadlock."""
+        run = Run(id="r1", name="test", started_at=_now())
+        await run_repo.save_run(run)
+
+        step = Step(
+            id="s1",
+            run_id="r1",
+            index=0,
+            type=StepType.LLM_CALL,
+            started_at=_now(),
+            ended_at=_now(),
+            duration_ms=5,
+            input={},
+            output={},
+        )
+        # Interleaved writes on same connection — must not raise
+        await step_repo.save_step(step)
+        await run_repo.update_run_ended("r1", _now())
+
+        fetched = await run_repo.get_run("r1")
+        assert fetched is not None
+        assert fetched.ended_at is not None

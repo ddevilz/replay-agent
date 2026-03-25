@@ -7,7 +7,11 @@ import anyio
 import typer
 
 from replay.config import ReplayConfig
-from replay.storage.duckdb_repo import DuckDBRunRepository, DuckDBStepRepository
+from replay.storage.duckdb_repo import (
+    DuckDBRunRepository,
+    DuckDBStepRepository,
+    open_db,
+)
 from replay.storage.reader import get_full_timeline, get_run_summary
 from replay.types import Run, RunSummary, Step
 
@@ -39,8 +43,9 @@ def show_command(
 ) -> None:
     """Show the full step-by-step detail of a run."""
     config = ReplayConfig()
-    run_repo = DuckDBRunRepository(config.db_path)
-    step_repo = DuckDBStepRepository(config.db_path)
+    conn = open_db(config.db_path)
+    run_repo = DuckDBRunRepository(conn)
+    step_repo = DuckDBStepRepository(conn)
 
     async def _fetch() -> tuple[Optional[Run], list[Step], Optional[RunSummary]]:
         run = await run_repo.get_run(run_id)
@@ -50,7 +55,7 @@ def show_command(
         summary = await get_run_summary(run, step_repo)
         return run, steps, summary
 
-    run, steps, summary = anyio.from_thread.run_sync(anyio.run, _fetch)  # type: ignore[arg-type]
+    run, steps, summary = anyio.run(_fetch)
 
     if run is None:
         typer.echo(f"Run '{run_id}' not found.", err=True)
@@ -58,7 +63,6 @@ def show_command(
 
     assert summary is not None
 
-    # Header
     status_color = (
         typer.colors.GREEN if summary.status == "completed"
         else typer.colors.RED if summary.status == "failed"
@@ -87,9 +91,6 @@ def show_command(
             typer.echo(f"       input:  {json.dumps(step.input, indent=6)}")
             typer.echo(f"       output: {json.dumps(step.output, indent=6)}")
         else:
-            # Truncated preview
-            in_preview = json.dumps(step.input)[:120]
-            out_preview = json.dumps(step.output)[:120]
-            typer.echo(f"       in:  {in_preview}")
-            typer.echo(f"       out: {out_preview}")
+            typer.echo(f"       in:  {json.dumps(step.input)[:120]}")
+            typer.echo(f"       out: {json.dumps(step.output)[:120]}")
     typer.echo("")

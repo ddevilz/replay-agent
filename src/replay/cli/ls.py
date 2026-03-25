@@ -6,11 +6,13 @@ import anyio
 import typer
 
 from replay.config import ReplayConfig
-from replay.storage.duckdb_repo import DuckDBRunRepository, DuckDBStepRepository
+from replay.storage.duckdb_repo import (
+    DuckDBRunRepository,
+    DuckDBStepRepository,
+    open_db,
+)
 from replay.storage.reader import get_run_summary
 from replay.types import RunSummary
-
-app = typer.Typer()
 
 
 def _fmt_cost(cost: Optional[float]) -> str:
@@ -26,10 +28,9 @@ def _fmt_duration(ms: int) -> str:
 
 
 def _fmt_when(summary: RunSummary) -> str:
-    import datetime
+    from datetime import datetime, timezone
 
-    now = datetime.datetime.now(tz=datetime.timezone.utc)
-    delta = now - summary.started_at
+    delta = datetime.now(tz=timezone.utc) - summary.started_at
     seconds = int(delta.total_seconds())
     if seconds < 60:
         return f"{seconds}s ago"
@@ -48,10 +49,11 @@ def ls_command(
 ) -> None:
     """List recent runs."""
     config = ReplayConfig()
-    run_repo = DuckDBRunRepository(config.db_path)
-    step_repo = DuckDBStepRepository(config.db_path)
+    conn = open_db(config.db_path)
+    run_repo = DuckDBRunRepository(conn)
+    step_repo = DuckDBStepRepository(conn)
 
-    async def _run() -> list[RunSummary]:
+    async def _fetch() -> list[RunSummary]:
         runs = await run_repo.list_runs(limit=limit, name=name, tag=tag)
         summaries = []
         for run in runs:
@@ -60,13 +62,12 @@ def ls_command(
                 summaries.append(summary)
         return summaries
 
-    summaries = anyio.from_thread.run_sync(anyio.run, _run)  # type: ignore[arg-type]
+    summaries = anyio.run(_fetch)
 
     if not summaries:
         typer.echo("No runs found.")
         return
 
-    # Column widths
     id_w, name_w = 10, 20
     header = (
         f"{'ID':<{id_w}}  {'NAME':<{name_w}}  "

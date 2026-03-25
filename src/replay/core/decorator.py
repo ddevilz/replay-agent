@@ -59,9 +59,9 @@ def trace(
     - Exceptions are always re-raised — Replay never swallows them.
     - Nested @replay.trace calls create child runs linked to the parent.
     - The ContextVar token is always reset in `finally`, even on exception.
+    - recorder.finish() is always called — run is never left open.
     """
     if func is None:
-        # @replay.trace(name="...", tags=[...]) — return a decorator
         return functools.partial(trace, name=name, tags=tags)  # type: ignore[return-value]
 
     @functools.wraps(func)
@@ -70,7 +70,6 @@ def trace(
         run_name = name or func.__name__
         run_tags = tags or []
 
-        # Nested trace — link this run to the parent.
         parent = get_recorder()
         recorder = factory.create(
             name=run_name,
@@ -81,14 +80,10 @@ def trace(
         token = set_recorder(recorder)
         try:
             await recorder.start()
-            result = await func(*args, **kwargs)
-            await recorder.finish()
-            return result
-        except Exception as exc:
-            await recorder.finish(error=repr(exc))
-            raise
+            return await func(*args, **kwargs)
         finally:
-            # Always executes — prevents stale recorder leaking into the next call.
+            # Always runs — closes the run and prevents ContextVar state leak.
+            await recorder.finish()
             reset_recorder(token)
 
     return wrapper  # type: ignore[return-value]

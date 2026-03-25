@@ -5,7 +5,12 @@ from typing import Optional
 from replay.config import ReplayConfig
 from replay.core.circuit_breaker import CircuitBreaker
 from replay.core.recorder import Recorder
-from replay.storage.duckdb_repo import DuckDBRunRepository, DuckDBStepRepository
+from replay.storage.duckdb_repo import (
+    DuckDBRunRepository,
+    DuckDBStepRepository,
+    open_db,
+)
+from replay.storage.repository import RunRepository, StepRepository
 from replay.strategies.redaction import (
     FieldRedaction,
     NoOpRedaction,
@@ -18,15 +23,31 @@ class RecorderFactory:
     """Constructs a fully-wired Recorder for each traced function entry.
 
     The decorator never instantiates Recorder directly — it calls this factory.
-    Swapping from DuckDB to Postgres (Phase 4) only requires changing this class.
+    Swapping DuckDB for Postgres (Phase 4) only requires changing this class.
+
+    Repos can be injected — used by tests to pass in-memory implementations
+    without any filesystem access.
     """
 
-    def __init__(self, config: ReplayConfig) -> None:
+    def __init__(
+        self,
+        config: ReplayConfig,
+        *,
+        run_repo: Optional[RunRepository] = None,
+        step_repo: Optional[StepRepository] = None,
+    ) -> None:
         self._config = config
-        # Shared repositories across all runs in this process.
-        # DuckDB allows one writer at a time — reusing the connection is required.
-        self._run_repo = DuckDBRunRepository(config.db_path)
-        self._step_repo = DuckDBStepRepository(config.db_path)
+
+        if run_repo is not None and step_repo is not None:
+            # Injected — used by tests with in-memory repos.
+            self._run_repo = run_repo
+            self._step_repo = step_repo
+        else:
+            # Production path — one shared connection, both repos on it.
+            conn = open_db(config.db_path)
+            self._run_repo = DuckDBRunRepository(conn)
+            self._step_repo = DuckDBStepRepository(conn)
+
         self._redaction = self._build_redaction(config)
 
     def create(

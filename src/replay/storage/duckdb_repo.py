@@ -57,16 +57,47 @@ CREATE INDEX IF NOT EXISTS idx_runs_started    ON runs(started_at DESC);
 """
 
 
-def _ensure_db(path: Path) -> duckdb.DuckDBPyConnection:
+def open_db(path: Path) -> duckdb.DuckDBPyConnection:
+    """Open (or create) the DuckDB database and apply schema.
+
+    Returns the single shared connection. Callers must pass this connection
+    to both DuckDBRunRepository and DuckDBStepRepository — DuckDB allows only
+    one writer at a time on a local file.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = duckdb.connect(str(path))
     conn.execute(_DDL)
-    # upsert schema version marker
     conn.execute(
         "INSERT OR IGNORE INTO schema_version (version) VALUES (?)",
         [_SCHEMA_VERSION],
     )
     return conn
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Datetime helpers — DuckDB stores as naive UTC, Python uses aware UTC
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def _to_naive_utc(dt: datetime) -> datetime:
+    """Strip timezone for DuckDB TIMESTAMP storage (always UTC internally)."""
+    if dt.tzinfo is not None:
+        return dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
+
+
+def _to_aware_utc(dt: Optional[datetime]) -> Optional[datetime]:
+    """Re-attach UTC timezone when reading back from DuckDB TIMESTAMP."""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Row mappers — pure functions, no side effects
+# ──────────────────────────────────────────────────────────────────────────────
 
 
 def _row_to_run(row: tuple[Any, ...]) -> Run:
@@ -102,27 +133,20 @@ def _row_to_step(row: tuple[Any, ...]) -> Step:
     )
 
 
-def _to_naive_utc(dt: datetime) -> datetime:
-    """Strip timezone info for DuckDB TIMESTAMP storage (always UTC)."""
-    if dt.tzinfo is not None:
-        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
-    return dt
-
-
-def _to_aware_utc(dt: Optional[datetime]) -> Optional[datetime]:
-    """Re-attach UTC timezone when reading back from DuckDB TIMESTAMP."""
-    if dt is None:
-        return None
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
+# ──────────────────────────────────────────────────────────────────────────────
+# Repositories
+# ──────────────────────────────────────────────────────────────────────────────
 
 
 class DuckDBRunRepository(RunRepository):
-    """DuckDB-backed run storage. Single connection, reused across calls."""
+    """DuckDB-backed run storage.
 
-    def __init__(self, db_path: Path) -> None:
-        self._conn = _ensure_db(db_path)
+    Accepts a shared connection — do not create separate connections per repo.
+    DuckDB only allows one writer at a time on a local file.
+    """
+
+    def __init__(self, conn: duckdb.DuckDBPyConnection) -> None:
+        self._conn = conn
 
     # ------------------------------------------------------------------ writes
 
@@ -131,10 +155,8 @@ class DuckDBRunRepository(RunRepository):
 
     def _save_run_sync(self, run: Run) -> None:
         self._conn.execute(
-            """
-            INSERT INTO runs (id, name, started_at, ended_at, tags, parent_run_id, fork_at_step)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
+            "INSERT INTO runs (id, name, started_at, ended_at, tags, parent_run_id, fork_at_step) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
             [
                 run.id,
                 run.name,
@@ -146,15 +168,13 @@ class DuckDBRunRepository(RunRepository):
             ],
         )
 
-    async def update_run_ended(self, run_id: str, ended_at: object) -> None:
+    async def update_run_ended(self, run_id: str, ended_at: datetime) -> None:
         await anyio.to_thread.run_sync(self._update_ended_sync, run_id, ended_at)
 
-    def _update_ended_sync(self, run_id: str, ended_at: object) -> None:
-        # ended_at is the only mutable field on a run — recording completion
-        naive = _to_naive_utc(ended_at) if isinstance(ended_at, datetime) else ended_at  # type: ignore[arg-type]
+    def _update_ended_sync(self, run_id: str, ended_at: datetime) -> None:
         self._conn.execute(
             "UPDATE runs SET ended_at = ? WHERE id = ?",
-            [naive, run_id],
+            [_to_naive_utc(ended_at), run_id],
         )
 
     # ------------------------------------------------------------------ reads
@@ -188,7 +208,6 @@ class DuckDBRunRepository(RunRepository):
             clauses.append("name LIKE ?")
             params.append(f"%{name}%")
         if tag is not None:
-            # DuckDB JSON array contains check
             clauses.append("json_contains(tags, ?)::BOOLEAN")
             params.append(json.dumps(tag))
 
@@ -204,10 +223,14 @@ class DuckDBRunRepository(RunRepository):
 
 
 class DuckDBStepRepository(StepRepository):
-    """DuckDB-backed step storage. Append-only — no UPDATE path exists."""
+    """DuckDB-backed step storage. Append-only — no UPDATE path exists.
 
-    def __init__(self, db_path: Path) -> None:
-        self._conn = _ensure_db(db_path)
+    Accepts a shared connection — must be the same connection used by
+    DuckDBRunRepository. See open_db().
+    """
+
+    def __init__(self, conn: duckdb.DuckDBPyConnection) -> None:
+        self._conn = conn
 
     # ------------------------------------------------------------------ writes
 
@@ -216,13 +239,11 @@ class DuckDBStepRepository(StepRepository):
 
     def _save_step_sync(self, step: Step) -> None:
         self._conn.execute(
-            """
-            INSERT INTO steps (
-                id, run_id, index, type, started_at, ended_at, duration_ms,
-                input, output, error, model, tokens_in, tokens_out,
-                cached_tokens_in, cost_usd, metadata
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
+            "INSERT INTO steps ("
+            "  id, run_id, index, type, started_at, ended_at, duration_ms,"
+            "  input, output, error, model, tokens_in, tokens_out,"
+            "  cached_tokens_in, cost_usd, metadata"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
                 step.id,
                 step.run_id,

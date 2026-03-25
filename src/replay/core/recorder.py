@@ -130,7 +130,6 @@ class Recorder:
         # Callers treat None as "step dropped silently".
         return None if self._cb.is_open else step
 
-    async def finish(self, *, error: Optional[str] = None) -> None:
+    async def finish(self) -> None:
         """Close the run. Called in the decorator's finally block — always runs."""
-        ended_at = _now()
-        await self._cb.call(self._run_repo.update_run_ended, self._run_id, ended_at)
+        await self._cb.call(self._run_repo.update_run_ended, self._run_id, _now())

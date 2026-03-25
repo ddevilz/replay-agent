@@ -19,10 +19,11 @@ async def session(
 
         async with replay.session("booking-agent") as sess:
             result = await agent.run(input)
-            # steps are recorded via record_step() inside agent.run()
 
-    The context manager handles start, finish, and ContextVar cleanup
-    with the same guarantees as @replay.trace.
+    Guarantees:
+    - recorder.finish() always runs — run is never left open.
+    - ContextVar token is always reset in finally.
+    - Exceptions are always re-raised.
     """
     factory = _get_factory()
     parent = get_recorder()
@@ -37,9 +38,6 @@ async def session(
     try:
         await recorder.start()
         yield recorder
-        await recorder.finish()
-    except Exception as exc:
-        await recorder.finish(error=repr(exc))
-        raise
     finally:
+        await recorder.finish()
         reset_recorder(token)
