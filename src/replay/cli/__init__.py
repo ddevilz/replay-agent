@@ -4,6 +4,7 @@ import typer
 
 from replay.cli.ls import ls_command
 from replay.cli.show import show_command
+from replay.cli.ui import ui_command
 
 app = typer.Typer(
     name="replay",
@@ -13,3 +14,4 @@ app = typer.Typer(
 
 app.command("ls")(ls_command)
 app.command("show")(show_command)
+app.command("ui")(ui_command)

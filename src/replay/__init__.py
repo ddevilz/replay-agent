@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from replay.config import ReplayConfig
 from replay.core.context import get_recorder
-from replay.core.decorator import _set_factory, trace
+from replay.core.decorator import _get_factory, _set_factory, trace
 from replay.core.factory import RecorderFactory
 from replay.core.recorder import Recorder
 from replay.core.session import session
@@ -25,6 +25,7 @@ __all__ = [
     "session",
     "record_step",
     "configure",
+    "install",
     # Types
     "Step",
     "StepType",
@@ -36,6 +37,28 @@ __all__ = [
     "get_recorder",
     "Recorder",
 ]
+
+
+def install(
+    patch_openai: bool = True,
+    patch_anthropic: bool = True,
+) -> None:
+    """Install SDK-level patches for OpenAI and Anthropic clients.
+
+    Call once at process startup, before any LLM calls:
+
+        import replay
+        replay.install()
+
+    Providers whose SDK is not installed are silently skipped.
+    """
+    factory = _get_factory()
+    if patch_openai:
+        from replay.integrations.sdk_patches.openai_patch import install as _oi
+        _oi(factory)
+    if patch_anthropic:
+        from replay.integrations.sdk_patches.anthropic_patch import install as _an
+        _an(factory)
 
 
 def configure(

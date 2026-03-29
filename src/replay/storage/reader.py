@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from replay.storage.repository import RunRepository, StepRepository
+from replay.storage.repository import StepRepository
 from replay.types import Run, RunSummary, Step
 
 

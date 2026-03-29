@@ -116,6 +116,35 @@ class TestRecorder:
         assert run.ended_at is not None
 
     @pytest.mark.anyio
+    async def test_finish_records_error(
+        self,
+        run_repo: InMemoryRunRepository,
+        step_repo: InMemoryStepRepository,
+    ) -> None:
+        recorder = _make_recorder(run_repo, step_repo)
+        await recorder.start()
+        await recorder.finish(error="something went wrong")
+
+        run = await run_repo.get_run(recorder.run_id)
+        assert run is not None
+        assert run.error == "something went wrong"
+        assert run.ended_at is not None
+
+    @pytest.mark.anyio
+    async def test_finish_no_error_leaves_error_none(
+        self,
+        run_repo: InMemoryRunRepository,
+        step_repo: InMemoryStepRepository,
+    ) -> None:
+        recorder = _make_recorder(run_repo, step_repo)
+        await recorder.start()
+        await recorder.finish()
+
+        run = await run_repo.get_run(recorder.run_id)
+        assert run is not None
+        assert run.error is None
+
+    @pytest.mark.anyio
     async def test_circuit_breaker_open_does_not_raise(
         self,
         run_repo: InMemoryRunRepository,

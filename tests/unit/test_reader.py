@@ -6,7 +6,7 @@ import pytest
 
 from replay.storage.reader import get_full_timeline, get_run_summary
 from replay.types import Run, Step, StepType
-from tests.conftest import InMemoryRunRepository, InMemoryStepRepository
+from tests.conftest import InMemoryStepRepository
 
 
 def _now() -> datetime:

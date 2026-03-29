@@ -78,12 +78,16 @@ def trace(
         )
 
         token = set_recorder(recorder)
+        _error: Optional[str] = None
         try:
             await recorder.start()
             return await func(*args, **kwargs)
+        except Exception as exc:
+            _error = str(exc) or type(exc).__name__
+            raise
         finally:
             # Always runs — closes the run and prevents ContextVar state leak.
-            await recorder.finish()
+            await recorder.finish(error=_error)
             reset_recorder(token)
 
     return wrapper  # type: ignore[return-value]

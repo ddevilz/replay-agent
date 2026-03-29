@@ -25,10 +25,12 @@ class InMemoryRunRepository(RunRepository):
     async def get_run(self, run_id: str) -> Optional[Run]:
         return self._runs.get(run_id)
 
-    async def update_run_ended(self, run_id: str, ended_at: object) -> None:
+    async def update_run_ended(
+        self, run_id: str, ended_at: object, error: Optional[str] = None
+    ) -> None:
         run = self._runs.get(run_id)
         if run is not None:
-            self._runs[run_id] = run.model_copy(update={"ended_at": ended_at})
+            self._runs[run_id] = run.model_copy(update={"ended_at": ended_at, "error": error})
 
     async def list_runs(
         self,

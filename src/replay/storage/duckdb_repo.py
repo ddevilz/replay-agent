@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS runs (
     name          VARCHAR NOT NULL,
     started_at    TIMESTAMP NOT NULL,
     ended_at      TIMESTAMP,
+    error         VARCHAR,
     tags          JSON     NOT NULL DEFAULT '[]',
     parent_run_id VARCHAR,
     fork_at_step  INTEGER
@@ -106,9 +107,10 @@ def _row_to_run(row: tuple[Any, ...]) -> Run:
         name=row[1],
         started_at=_to_aware_utc(row[2]),  # type: ignore[arg-type]
         ended_at=_to_aware_utc(row[3]),
-        tags=json.loads(row[4]) if isinstance(row[4], str) else (row[4] or []),
-        parent_run_id=row[5],
-        fork_at_step=row[6],
+        error=row[4],
+        tags=json.loads(row[5]) if isinstance(row[5], str) else (row[5] or []),
+        parent_run_id=row[6],
+        fork_at_step=row[7],
     )
 
 
@@ -155,26 +157,32 @@ class DuckDBRunRepository(RunRepository):
 
     def _save_run_sync(self, run: Run) -> None:
         self._conn.execute(
-            "INSERT INTO runs (id, name, started_at, ended_at, tags, parent_run_id, fork_at_step) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO runs "
+            "(id, name, started_at, ended_at, error, tags, parent_run_id, fork_at_step) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             [
                 run.id,
                 run.name,
                 _to_naive_utc(run.started_at),
                 _to_naive_utc(run.ended_at) if run.ended_at else None,
+                run.error,
                 json.dumps(run.tags),
                 run.parent_run_id,
                 run.fork_at_step,
             ],
         )
 
-    async def update_run_ended(self, run_id: str, ended_at: datetime) -> None:
-        await anyio.to_thread.run_sync(self._update_ended_sync, run_id, ended_at)
+    async def update_run_ended(
+        self, run_id: str, ended_at: datetime, error: Optional[str] = None
+    ) -> None:
+        await anyio.to_thread.run_sync(self._update_ended_sync, run_id, ended_at, error)
 
-    def _update_ended_sync(self, run_id: str, ended_at: datetime) -> None:
+    def _update_ended_sync(
+        self, run_id: str, ended_at: datetime, error: Optional[str]
+    ) -> None:
         self._conn.execute(
-            "UPDATE runs SET ended_at = ? WHERE id = ?",
-            [_to_naive_utc(ended_at), run_id],
+            "UPDATE runs SET ended_at = ?, error = ? WHERE id = ?",
+            [_to_naive_utc(ended_at), error, run_id],
         )
 
     # ------------------------------------------------------------------ reads
@@ -184,7 +192,7 @@ class DuckDBRunRepository(RunRepository):
 
     def _get_run_sync(self, run_id: str) -> Optional[Run]:
         row = self._conn.execute(
-            "SELECT id, name, started_at, ended_at, tags, parent_run_id, fork_at_step "
+            "SELECT id, name, started_at, ended_at, error, tags, parent_run_id, fork_at_step "
             "FROM runs WHERE id = ?",
             [run_id],
         ).fetchone()
@@ -215,7 +223,7 @@ class DuckDBRunRepository(RunRepository):
         params.append(limit)
 
         rows = self._conn.execute(
-            f"SELECT id, name, started_at, ended_at, tags, parent_run_id, fork_at_step "
+            f"SELECT id, name, started_at, ended_at, error, tags, parent_run_id, fork_at_step "
             f"FROM runs {where} ORDER BY started_at DESC LIMIT ?",
             params,
         ).fetchall()

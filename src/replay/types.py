@@ -14,6 +14,7 @@ class StepType(str, Enum):
     MEMORY_READ = "memory_read"
     MEMORY_WRITE = "memory_write"
     AGENT_DECISION = "agent_decision"
+    CUSTOM = "custom"
 
 
 class Step(BaseModel):
@@ -46,6 +47,7 @@ class Run(BaseModel):
     name: str
     started_at: datetime
     ended_at: Optional[datetime] = None
+    error: Optional[str] = None  # set if the run finished with an unhandled exception
     tags: list[str] = Field(default_factory=list)
     parent_run_id: Optional[str] = None  # set if this run is a fork
     fork_at_step: Optional[int] = None  # step index the fork branches from

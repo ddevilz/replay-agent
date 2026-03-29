@@ -5,7 +5,20 @@ description = "Time-travel debugger for AI agents. Record every step, scrub back
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
+authors = [{ name = "Devashish Jadhav" }]
 keywords = ["ai", "agents", "debugging", "observability", "tracing"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Debuggers",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
     "anyio>=4.0.0",
     "duckdb>=0.9.0",
@@ -13,8 +26,13 @@ dependencies = [
     "typer>=0.9.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/ddevilz/replay-agent"
+Repository = "https://github.com/ddevilz/replay-agent"
+
 [project.optional-dependencies]
-api = ["fastapi>=0.100.0", "uvicorn>=0.20.0"]
+ui = ["fastapi>=0.100.0", "uvicorn>=0.20.0"]
+otel = ["opentelemetry-sdk>=1.20.0", "opentelemetry-proto>=1.20.0"]
 
 [project.scripts]
 replay = "replay.cli:app"
@@ -28,6 +46,7 @@ packages = ["src/replay"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+anyio_backends = ["asyncio"]
 testpaths = ["tests"]
 markers = ["integration: marks tests that require DuckDB on disk (deselect with -m 'not integration')"]
 

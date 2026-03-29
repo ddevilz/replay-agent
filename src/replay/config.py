@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -24,11 +23,6 @@ class ReplayConfig(BaseModel):
     # Redaction
     redact_pii: bool = False
     redact_fields: list[str] = Field(default_factory=list)
-
-    # Cloud (Phase 4 — wired here so the factory knows the shape)
-    cloud_enabled: bool = False
-    api_url: str = "https://api.replay.dev"
-    api_key: Optional[str] = None
 
     # Observability
     disabled: bool = False  # REPLAY_DISABLED=1 — complete no-op when True

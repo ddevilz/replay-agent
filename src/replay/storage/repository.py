@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import Any, Optional
 
 from replay.types import Run, Step
 
@@ -16,7 +16,9 @@ class RunRepository(ABC):
     async def get_run(self, run_id: str) -> Optional[Run]: ...
 
     @abstractmethod
-    async def update_run_ended(self, run_id: str, ended_at: object) -> None:
+    async def update_run_ended(
+        self, run_id: str, ended_at: Any, error: Optional[str] = None
+    ) -> None:
         """Mark the run as finished. ended_at must be a timezone-aware datetime."""
         ...
 

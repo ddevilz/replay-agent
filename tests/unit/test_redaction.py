@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import pytest
 
 from replay.strategies.redaction import FieldRedaction, NoOpRedaction, PIIRedaction
 
